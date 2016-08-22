@@ -14,6 +14,7 @@
 #include <sstream>
 #include <tuple>
 #include <functional>
+#include <unordered_map>
 
 inline float deg2rad(float deg) 
 {
@@ -70,9 +71,9 @@ namespace {
 
 }
 
-std::vector<std::tuple<std::string, std::size_t, bool>> get_files(std::string path)
+std::vector<std::tuple<std::string, std::size_t, bool, float>> get_files(std::string path)
 {
-  std::vector<std::tuple<std::string, std::size_t, bool>> files;
+  std::vector<std::tuple<std::string, std::size_t, bool, float>> files;
 
   if (access(path.c_str(), R_OK) != 0) {
     printf("Insufficient user privileges to access %s", path.c_str());
@@ -107,7 +108,7 @@ std::vector<std::tuple<std::string, std::size_t, bool>> get_files(std::string pa
       perror("ftw");
     }
     
-    files.emplace_back(std::move(filename), running_size, is_dir);
+    files.emplace_back(std::move(filename), running_size, is_dir, 0.f /* Will be populated later*/);
   }
   closedir(dirp);
 
@@ -131,8 +132,13 @@ int main(int argc, char *argv[])
   }
 
   // Enumerate files and directories
-  // <relative name, size in bytes, is directory>
-  std::vector<std::tuple<std::string, std::size_t, bool>> files = get_files(path);
+  // <relative name, size in bytes, is directory, folder size percentage>
+  std::vector<std::tuple<std::string, std::size_t, bool, float>> files = get_files(path);
+
+  if (files.empty()) {
+    printf("No files or directories detected in the specified path\n");
+    exit(0);
+  }
 
   initscr(); // Start curses mode. This also initializes COLS, LINES
   noecho(); // No chars echo
@@ -147,8 +153,8 @@ int main(int argc, char *argv[])
   keypad(stdscr, true); // Intercept F1
   printw("Press ESC to exit");
 
-  const int ellipse_width = COLS / 4;
-  const int ellipse_height = LINES / 4;
+  const int ellipse_width = COLS / 5;
+  const int ellipse_height = LINES / 5;
 
   const int center_x = COLS / 2;
   const int center_y = LINES / 2;
@@ -163,25 +169,31 @@ int main(int argc, char *argv[])
 		//mvaddch(y,x,'.');
 	//}
 
-  const std::size_t total = std::accumulate(files.begin(), files.end(), std::size_t(0), [](std::size_t a, const auto& b) {
+  const std::size_t total_files_size = std::accumulate(files.begin(), files.end(), std::size_t(0), [](std::size_t a, const auto& b) {
     size_t size = 0;
-    std::tie(std::ignore, size, std::ignore) = b;
+    std::tie(std::ignore, size, std::ignore, std::ignore) = b;
     return a + size;
   });
+  for(auto& f : files) {
+    size_t size;
+    float percentage;
+    std::tie(std::ignore, size, std::ignore, percentage) = f;
+    std::get<3>(f) = (float)size / total_files_size; // Percentages in range [0;1]
+  }
 
-  std::vector<float> percentages; // In range [0,1]
-  for(const auto& f : files) {
-    size_t size = 0;
-    std::tie(std::ignore, size, std::ignore) = f;
-    percentages.push_back((float)size / total);
-  }
-  // TODO: only draw files that account for more than 5%, the rest goes under "others"
- 
-  if (percentages.empty()) {
-    endwin();
-    printw("No files or directories in the specified path\n");
-    exit(1);
-  }
+  // Sort files in ascending order
+  std::sort(files.begin(), files.end(), [](const auto& e1, const auto& e2) {
+    return std::get<1>(e1) < std::get<1>(e2);
+  });
+
+  auto to_hex_string = [](std::size_t val, std::ios_base& (*f)(std::ios_base&)) {
+    std::ostringstream oss;
+    oss << f << val;
+    return oss.str();
+  };
+  std::unordered_map<std::string, std::size_t /* Index in files */> hex_to_dir_map; // Will be computed later
+  std::size_t hex_id = 0;
+
 
   // ncurses colors are cycled from the following pairs
   int current_color = 1;
@@ -196,17 +208,19 @@ int main(int argc, char *argv[])
   attron(COLOR_PAIR(current_color));
   std::size_t element_index = 0;
   float previous_limit = 0.f;
-  float next_limit = 360.f * percentages[element_index];
+  float percentage = std::get<3>(files[element_index]);
+  float next_limit = 360.f * percentage;
   bool label_printed = false;
   for(float deg = 0; deg < 360.0f; deg += 1.0f)
   {
     if (deg >= next_limit) {
 
       ++element_index;
-      if (element_index >= percentages.size())
+      if (element_index >= files.size())
         break; // All elements drawn
       previous_limit = next_limit;
-      next_limit += 360.f * percentages[element_index];
+      percentage = std::get<3>(files[element_index]);
+      next_limit += 360.f * percentage;
       label_printed = false;
       current_color = (current_color + 1)  % 8;
       if (current_color == 0)
@@ -234,24 +248,44 @@ int main(int argc, char *argv[])
 
       float label_dock_point = radius + 4.f;
 
-      std::stringstream ss;
+      std::ostringstream ss;
       std::string filename;
       std::size_t size;
       bool is_dir = false;
-      std::tie(filename, size, is_dir) = files[element_index];
+      std::tie(filename, size, is_dir, std::ignore) = files[element_index];
+
+      std::string hex_key;
+      if (is_dir) {
+        hex_key = to_hex_string(hex_id++, std::hex);
+        hex_to_dir_map.emplace(hex_key, element_index);
+      }
+
       if (filename.size() > 30)
         filename = filename.substr(0, 30) + "...";
-      ss << (is_dir ? "[DIR] " : "") << filename << " (" << format_size_human(size) << ")";
+
+      if (is_dir)
+        ss << "{" << hex_key << "} [DIR] ";
+
+      ss << filename << " (" << format_size_human(size) << ")";
 
       float dx = label_dock_point * cos(rad);
       float dy = label_dock_point * sin(rad);
 
       attron(COLOR_PAIR(8));
 
+      std::string str = ss.str();
+
       int x_point = center_x + dx;
       if (x_point < center_x)
-        x_point -= ss.str().size();
-      mvwprintw(stdscr, center_y - dy, x_point, ss.str().c_str());
+        x_point = std::max(x_point - str.size(), std::size_t(0));
+      else if (x_point + (int)str.size() > COLS) {
+        int new_size = COLS - x_point;
+        if (new_size == 0)
+          str = "";
+        else
+          str.resize(new_size);
+      }
+      mvwprintw(stdscr, center_y - dy, x_point, str.c_str());
 
       attron(COLOR_PAIR(current_color));
     }
@@ -261,6 +295,8 @@ int main(int argc, char *argv[])
 
 
   refresh();
+
+  // Ask for input if there are mapped folders
 
   int ch;
   while((ch = getch()) != 0x1B /* Escape */)
