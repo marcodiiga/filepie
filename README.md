@@ -1,4 +1,4 @@
-# filepie
+# filepie [![gplv3](https://img.shields.io/aur/license/yaourt.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 Terminal utility to display size quota maps on drives and folders
 
 [![asciicast](https://asciinema.org/a/8aw5ijubuwtnp6kt6p1svr30u.png)](https://asciinema.org/a/8aw5ijubuwtnp6kt6p1svr30u)
