@@ -2,6 +2,7 @@
 #include <limits.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <ftw.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <string.h>
@@ -58,39 +59,25 @@ bool exists_path(std::string path)
   return false;
 }
 
-std::vector<std::tuple<std::string, std::size_t, bool>> get_files(std::string path, std::size_t& path_size)
+namespace {
+
+  static std::size_t running_size = 0;
+  int visitor_sum_size(const char*, const struct stat *sb, int, struct FTW*)
+  {
+    running_size += sb->st_size;
+    return 0;
+  }
+
+}
+
+std::vector<std::tuple<std::string, std::size_t, bool>> get_files(std::string path)
 {
   std::vector<std::tuple<std::string, std::size_t, bool>> files;
-  path_size = 0;
-  std::function<std::size_t(char*)> recursive_dir_size = [&recursive_dir_size](char *dir_path)
-  {
-    DIR *dir = opendir(dir_path);
-    if (dir == 0) {
-      printf("Cannot access '%s'\n", dir_path);
-      perror(NULL);
-      return std::size_t(0);
-    }
-    struct dirent *dent;
-    char temp[PATH_MAX];
-    std::size_t total_size = 0;
 
-    while ((dent = readdir(dir)) != NULL) {
-      if ((strcmp(dent->d_name, ".") == 0) || (strcmp(dent->d_name, "..") == 0))
-        continue;
-
-      struct stat st;
-      sprintf(temp, "%s/%s", dir_path, dent->d_name);
-      if (lstat(temp, &st) != 0)
-        continue;
-
-      total_size += st.st_size;
-
-      if (S_ISDIR(st.st_mode))
-        total_size += recursive_dir_size(temp);
-    }
-    closedir(dir);
-    return total_size;
-  };
+  if (access(path.c_str(), R_OK) != 0) {
+    printf("Insufficient user privileges to access %s", path.c_str());
+    exit(1);
+  }
 
   DIR *dirp = opendir(path.c_str());
   if (dirp == NULL) {
@@ -113,13 +100,14 @@ std::vector<std::tuple<std::string, std::size_t, bool>> get_files(std::string pa
 
     std::string filename = dent->d_name;
     bool is_dir = S_ISDIR(st.st_mode);
-    std::size_t size = st.st_size;
-    if (is_dir)
-      size += recursive_dir_size(temp);
 
-    path_size += size;
+    running_size = 0;
+    if (nftw(temp, &visitor_sum_size, 1, FTW_PHYS)) {
+      printf("Error while accessing %s\n", temp);
+      perror("ftw");
+    }
     
-    files.emplace_back(std::move(filename), size, is_dir);                                      
+    files.emplace_back(std::move(filename), running_size, is_dir);
   }
   closedir(dirp);
 
@@ -144,15 +132,8 @@ int main(int argc, char *argv[])
 
   // Enumerate files and directories
   // <relative name, size in bytes, is directory>
-  std::size_t path_size = 0;
-  std::vector<std::tuple<std::string, std::size_t, bool>> files = get_files(path, path_size);
+  std::vector<std::tuple<std::string, std::size_t, bool>> files = get_files(path);
 
-
-  printf("TOTAL SIZE OF DIR IS %d BYTES\n", path_size);
-  for(auto& el : files) {
-    printf("%s, size %d, directory: %s\n", std::get<0>(el).c_str(), std::get<1>(el), (std::get<2>(el) == false) ? "NO" : "YES");
-  }
-#if 0
   initscr(); // Start curses mode. This also initializes COLS, LINES
   noecho(); // No chars echo
   cbreak(); // Line buffering disabled, everything is passed to us
@@ -182,13 +163,17 @@ int main(int argc, char *argv[])
 		//mvaddch(y,x,'.');
 	//}
 
-  const std::size_t total = std::accumulate(files.begin(), files.end(), 0u, [](std::size_t a, const auto& b) {
-    return a + b.second;
+  const std::size_t total = std::accumulate(files.begin(), files.end(), std::size_t(0), [](std::size_t a, const auto& b) {
+    size_t size = 0;
+    std::tie(std::ignore, size, std::ignore) = b;
+    return a + size;
   });
 
   std::vector<float> percentages; // In range [0,1]
-  for(auto& f : files) {
-    percentages.push_back((float)f.second / total);
+  for(const auto& f : files) {
+    size_t size = 0;
+    std::tie(std::ignore, size, std::ignore) = f;
+    percentages.push_back((float)size / total);
   }
   // TODO: only draw files that account for more than 5%, the rest goes under "others"
  
@@ -252,10 +237,11 @@ int main(int argc, char *argv[])
       std::stringstream ss;
       std::string filename;
       std::size_t size;
-      std::tie(filename, size) = files[element_index];
+      bool is_dir = false;
+      std::tie(filename, size, is_dir) = files[element_index];
       if (filename.size() > 30)
         filename = filename.substr(0, 30) + "...";
-      ss << filename << " (" << format_size_human(size) << ")";
+      ss << (is_dir ? "[DIR] " : "") << filename << " (" << format_size_human(size) << ")";
 
       float dx = label_dock_point * cos(rad);
       float dy = label_dock_point * sin(rad);
@@ -280,7 +266,7 @@ int main(int argc, char *argv[])
   while((ch = getch()) != 0x1B /* Escape */)
   {   
   }
-#endif
+
   endwin(); // End curses mode
   return 0;
 
