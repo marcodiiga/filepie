@@ -181,12 +181,18 @@ void scan_path(std::string path,
   {
     if (deg >= next_limit) {
 
-      ++element_index;
+      while (deg >= next_limit) {
+        ++element_index;
+        if (element_index >= files.size())
+          break; // All elements drawn
+        previous_limit = next_limit;
+        percentage = std::get<3>(files[element_index]);
+        next_limit += 360.f * percentage;
+      }
+
       if (element_index >= files.size())
         break; // All elements drawn
-      previous_limit = next_limit;
-      percentage = std::get<3>(files[element_index]);
-      next_limit += 360.f * percentage;
+
       label_printed = false;
       current_color = (current_color + 1)  % 8;
       if (current_color == 0)
