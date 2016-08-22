@@ -115,59 +115,35 @@ std::vector<std::tuple<std::string, std::size_t, bool, float>> get_files(std::st
   return files;
 }
 
-WINDOW *create_newwin(int height, int width, int starty, int startx);
-void destroy_win(WINDOW *local_win);
-
-int main(int argc, char *argv[])
+void scan_path(std::string path,
+               std::vector<std::tuple<std::string, std::size_t, bool, float>>& files,
+               std::unordered_map<std::string, std::size_t /* Index in files */>& hex_to_dir_map)
 {
-  std::string path;
-  if (argc < 2) {
-   path = get_cwd();   
-  } else {
-    path = argv[1];
-    if (exists_path(path) == false) {
-      printf("Invalid folder: '%s'\n", path.c_str());
-      exit(1);
-    }
-  }
+  clear();
+  files.clear();
+  hex_to_dir_map.clear();
 
-  // Enumerate files and directories
-  // <relative name, size in bytes, is directory, folder size percentage>
-  std::vector<std::tuple<std::string, std::size_t, bool, float>> files = get_files(path);
+  printw("Scanning, please wait..");
+  refresh();
 
-  if (files.empty()) {
-    printf("No files or directories detected in the specified path\n");
-    exit(0);
-  }
+  files = get_files(path);
 
-  initscr(); // Start curses mode. This also initializes COLS, LINES
-  noecho(); // No chars echo
-  cbreak(); // Line buffering disabled, everything is passed to us
-  curs_set(0); // Disable cursor
-  if (has_colors() == false) {
-    endwin();
-    printf("Your terminal does not support color\n");
-    exit(1);
-  }
-  start_color();
-  keypad(stdscr, true); // Intercept F1
+  clear();
   printw("Press ESC to exit");
-
-  const int ellipse_width = COLS / 5;
-  const int ellipse_height = LINES / 5;
 
   const int center_x = COLS / 2;
   const int center_y = LINES / 2;
 
-  //const int border_margin = 3;
-  //int x, y;
-  //for (float deg = 0; deg < 360.0f; deg += 1.0f) 
-  //{
-		//x = center_x + (int)((ellipse_width + border_margin) * cos(deg2rad(deg)));
-		//y = center_y + (int)((ellipse_height + border_margin) * sin(deg2rad(deg)));
+  if (files.empty()) {
+    mvwprintw(stdscr, center_y, center_x, "No files or directories detected in the specified path");
+    return;
+  }
 
-		//mvaddch(y,x,'.');
-	//}
+  // hex_to_dir_map ids
+  std::size_t hex_id = 0;
+
+  const int ellipse_width = COLS / 5;
+  const int ellipse_height = LINES / 5;
 
   const std::size_t total_files_size = std::accumulate(files.begin(), files.end(), std::size_t(0), [](std::size_t a, const auto& b) {
     size_t size = 0;
@@ -191,20 +167,10 @@ int main(int argc, char *argv[])
     oss << f << val;
     return oss.str();
   };
-  std::unordered_map<std::string, std::size_t /* Index in files */> hex_to_dir_map; // Will be computed later
-  std::size_t hex_id = 0;
 
-
-  // ncurses colors are cycled from the following pairs
+  // ncurses starting color
   int current_color = 1;
-  init_pair(1, COLOR_RED, COLOR_RED);
-  init_pair(2, COLOR_GREEN, COLOR_GREEN);
-  init_pair(3, COLOR_YELLOW, COLOR_YELLOW);
-  init_pair(4, COLOR_BLUE, COLOR_BLUE);
-  init_pair(5, COLOR_MAGENTA, COLOR_MAGENTA);
-  init_pair(6, COLOR_CYAN, COLOR_CYAN);
-  init_pair(7, COLOR_WHITE, COLOR_WHITE);
-  init_pair(8, COLOR_WHITE, COLOR_BLACK); // Normal text
+
   attron(COLOR_PAIR(current_color));
   std::size_t element_index = 0;
   float previous_limit = 0.f;
@@ -239,7 +205,7 @@ int main(int argc, char *argv[])
     {
       float dx = dr * cos(rad);
       float dy = dr * sin(rad);
-      mvaddch(center_y - dy, center_x + dx, ' '); 
+      mvaddch(center_y - dy, center_x + dx, ' ');
     }
 
     if (!label_printed && abs(deg - ((previous_limit + next_limit) / 2.f)) <= 1.0f) {
@@ -260,126 +226,161 @@ int main(int argc, char *argv[])
         hex_to_dir_map.emplace(hex_key, element_index);
       }
 
+      std::string left_part, mid_part, right_part;
+
+      mid_part = filename;
       if (filename.size() > 30)
-        filename = filename.substr(0, 30) + "...";
+        mid_part = filename.substr(0, 30) + "...";
 
       if (is_dir)
         ss << "{" << hex_key << "} [DIR] ";
 
-      ss << filename << " (" << format_size_human(size) << ")";
+      left_part = ss.str();
+
+      ss.str("");
+      ss << " (" << format_size_human(size) << ")";
+
+      right_part = ss.str();
 
       float dx = label_dock_point * cos(rad);
       float dy = label_dock_point * sin(rad);
 
       attron(COLOR_PAIR(8));
 
-      std::string str = ss.str();
+      std::string final = left_part + mid_part + right_part;
 
       int x_point = center_x + dx;
-      if (x_point < center_x)
-        x_point = std::max(x_point - str.size(), std::size_t(0));
-      else if (x_point + (int)str.size() > COLS) {
-        int new_size = COLS - x_point;
-        if (new_size == 0)
-          str = "";
-        else
-          str.resize(new_size);
-      }
-      mvwprintw(stdscr, center_y - dy, x_point, str.c_str());
+      if (x_point > 0 && x_point < center_x) { // Left region
+        if ((int)final.size() > x_point)
+          final.resize(x_point);
+        x_point = std::max(x_point - (int)final.size(), 0);
+      } else if (x_point > 0 && x_point >= center_x) {
+        if (x_point + (int)final.size() >= COLS)
+          final.resize(COLS - x_point);
+      } else if (x_point == 0 || x_point == COLS)
+        final = ""; // No space
+
+      mvwprintw(stdscr, center_y - dy, x_point, final.c_str());
 
       attron(COLOR_PAIR(current_color));
     }
 
   }
-  attroff(COLOR_PAIR(1));
+  attron(COLOR_PAIR(8));
+}
 
+int main(int argc, char *argv[])
+{
+  std::vector<std::string> path_history;
+  std::string path;
+  if (argc < 2) {
+   path = get_cwd();   
+  } else {
+    path = argv[1];
+    if (exists_path(path) == false) {
+      printf("Invalid folder: '%s'\n", path.c_str());
+      exit(1);
+    }
+  }
 
+  // Enumerate files and directories
+  // <relative name, size in bytes, is directory, folder size percentage>
+  std::vector<std::tuple<std::string, std::size_t, bool, float>> files;
+  std::unordered_map<std::string, std::size_t /* Index in files */> hex_to_dir_map; // Will be computed later
+
+  initscr(); // Start curses mode. This also initializes COLS, LINES
+  cbreak(); // Line buffering disabled, everything is passed to us
+  curs_set(0); // Disable cursor
+  if (has_colors() == false) {
+    endwin();
+    printf("Your terminal does not support color\n");
+    exit(1);
+  }
+  start_color();
+  keypad(stdscr, true); // Intercept keypad
+
+  init_pair(1, COLOR_RED, COLOR_RED);
+  init_pair(2, COLOR_GREEN, COLOR_GREEN);
+  init_pair(3, COLOR_YELLOW, COLOR_YELLOW);
+  init_pair(4, COLOR_BLUE, COLOR_BLUE);
+  init_pair(5, COLOR_MAGENTA, COLOR_MAGENTA);
+  init_pair(6, COLOR_CYAN, COLOR_CYAN);
+  init_pair(7, COLOR_WHITE, COLOR_WHITE);
+  init_pair(8, COLOR_WHITE, COLOR_BLACK); // Normal text
+
+  path_history.push_back(path);
+  scan_path(path, files, hex_to_dir_map);
+
+  int input_cursor_x = 0, input_cursor_y = 0;
+
+  auto print_commands = [&]() {
+
+    mvwprintw(stdscr, 2, 0, "Current dir: ");
+    wprintw(stdscr, path.c_str());
+
+    if (!path_history.empty())
+      mvwprintw(stdscr, LINES - 2, 0, "Use 'p' to come back to the parent folder");
+
+    mvwprintw(stdscr, LINES - 3, 0, "Scan folder: ");
+    getyx(stdscr, input_cursor_y, input_cursor_x);
+  };
+
+  print_commands();
   refresh();
 
-  // Ask for input if there are mapped folders
-
+  std::string entered_key;
   int ch;
   while((ch = getch()) != 0x1B /* Escape */)
-  {   
+  {
+    switch(ch) {
+      case 0xA /* Enter */: {
+        if (entered_key.compare("p") == 0) {
+          entered_key = "";
+          path_history.pop_back(); // Pop current
+          if (path_history.empty()) {
+            // No parents
+            endwin();
+            printf("No other parents to scan\n");
+            exit(0);
+          }
+          path = path_history.back();
+          scan_path(path, files, hex_to_dir_map);
+          print_commands();
+          refresh();
+          continue;
+        }
+        auto it = hex_to_dir_map.find(entered_key);
+        if (it == hex_to_dir_map.end()) {
+          entered_key = "";
+          mvwprintw(stdscr, LINES - 3, 0, "Key not recognized. Try again: ");
+          getyx(stdscr, input_cursor_y, input_cursor_x);
+          wclrtoeol(stdscr);
+          refresh();
+        } else {
+          entered_key = "";
+          if (path.back() != '/')
+            path += '/';
+          path += std::get<0>(files[it->second]);
+          path_history.push_back(path);
+          scan_path(path, files, hex_to_dir_map);
+          print_commands();
+          refresh();
+        }
+        continue;
+      } break;
+      case 0x107 /* Backspace */: {
+        if (!entered_key.empty())
+          entered_key.resize(entered_key.size() - 1);
+        wmove(stdscr, input_cursor_y, input_cursor_x);
+        wclrtoeol(stdscr);
+        continue; // Prevent insertion into the buffer
+      }
+    }
+
+    entered_key += (char)ch;
   }
 
   endwin(); // End curses mode
+
   return 0;
-
-#if 0
-  WINDOW *my_win;
-	int startx, starty, width, height;
-	int ch;
-
-	initscr();			/* Start curses mode 		*/
-	cbreak();			/* Line buffering disabled, Pass on
-					 * everty thing to me 		*/
-	keypad(stdscr, TRUE);		/* I need that nifty F1 	*/
-
-	height = 3;
-	width = 10;
-	starty = (LINES - height) / 2;	/* Calculating for a center placement */
-	startx = (COLS - width) / 2;	/* of the window		*/
-	printw("Press F1 to exit");
-	refresh();
-	my_win = create_newwin(height, width, starty, startx);
-
-	while((ch = getch()) != KEY_F(1))
-	{	switch(ch)
-		{	case KEY_LEFT:
-				destroy_win(my_win);
-				my_win = create_newwin(height, width, starty,--startx);
-				break;
-			case KEY_RIGHT:
-				destroy_win(my_win);
-				my_win = create_newwin(height, width, starty,++startx);
-				break;
-			case KEY_UP:
-				destroy_win(my_win);
-				my_win = create_newwin(height, width, --starty,startx);
-				break;
-			case KEY_DOWN:
-				destroy_win(my_win);
-				my_win = create_newwin(height, width, ++starty,startx);
-				break;	
-		}
-	}
-		
-	endwin();			/* End curses mode		  */
-	return 0;
-#endif
-}
-
-WINDOW *create_newwin(int height, int width, int starty, int startx)
-{	WINDOW *local_win;
-
-	local_win = newwin(height, width, starty, startx);
-	box(local_win, 0 , 0);		/* 0, 0 gives default characters 
-					 * for the vertical and horizontal
-					 * lines			*/
-	wrefresh(local_win);		/* Show that box 		*/
-
-	return local_win;
-}
-
-void destroy_win(WINDOW *local_win)
-{	
-	/* box(local_win, ' ', ' '); : This won't produce the desired
-	 * result of erasing the window. It will leave it's four corners 
-	 * and so an ugly remnant of window. 
-	 */
-	wborder(local_win, ' ', ' ', ' ',' ',' ',' ',' ',' ');
-	/* The parameters taken are 
-	 * 1. win: the window on which to operate
-	 * 2. ls: character to be used for the left side of the window 
-	 * 3. rs: character to be used for the right side of the window 
-	 * 4. ts: character to be used for the top side of the window 
-	 * 5. bs: character to be used for the bottom side of the window 
-	 * 6. tl: character to be used for the top left corner of the window 
-	 * 7. tr: character to be used for the top right corner of the window 
-	 * 8. bl: character to be used for the bottom left corner of the window 
-	 * 9. br: character to be used for the bottom right corner of the window
-	 */
-	wrefresh(local_win);
-	delwin(local_win);
 }
