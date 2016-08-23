@@ -3,6 +3,16 @@ Terminal utility to display size quota maps on drives and folders
 
 [![asciicast](https://asciinema.org/a/8aw5ijubuwtnp6kt6p1svr30u.png)](https://asciinema.org/a/8aw5ijubuwtnp6kt6p1svr30u)
 
+## How to get filepie
+
+Either checkout the package from the ppa
+
+    sudo add-apt-repository ppa:marco-diiga/ppa
+    sudo apt-get update
+    sudo apt-get install filepie
+
+or build it yourself (see *How to build* section).
+
 ## How to build
 
 1. Install ncurses dependencies
