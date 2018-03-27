@@ -36,6 +36,7 @@
 #include <tuple>
 #include <functional>
 #include <unordered_map>
+#include <numeric>
 
 inline float deg2rad(float deg) 
 {
