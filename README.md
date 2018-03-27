@@ -21,8 +21,10 @@ or build it yourself (see *How to build* section).
 
 2. Checkout and build
 
-        git clone git@github.com:marcodiiga/filepie.git
-        cd filepie && cmake --build . --target all
+        git clone https://github.com/marcodiiga/filepie.git
+        cd filepie
+        cmake .
+        cmake --build . --target all
         bin/filepie
 
 ## License
