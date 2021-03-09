@@ -125,7 +125,7 @@ std::vector<std::tuple<std::string, std::size_t, bool, float>> get_files(std::st
     bool is_dir = S_ISDIR(st.st_mode);
 
     running_size = 0;
-    if (nftw(temp, &visitor_sum_size, 1, FTW_PHYS)) {
+    if (nftw(temp, &visitor_sum_size, 128, FTW_PHYS)) {
       printf("Error while accessing %s\n", temp);
       perror("ftw");
     }
