@@ -87,7 +87,7 @@ namespace {
   static std::size_t running_size = 0;
   int visitor_sum_size(const char*, const struct stat *sb, int, struct FTW*)
   {
-    running_size += sb->st_size;
+    running_size += std::size_t(sb->st_blocks) * 512;
     return 0;
   }
 
